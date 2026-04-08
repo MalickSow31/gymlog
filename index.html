@@ -71,6 +71,10 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 5px
 .prog-lbl { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .sync-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; border-bottom: 0.5px solid var(--border); background: var(--surface); }
 #install-banner { background: var(--accent); color: white; text-align: center; padding: 12px 16px; font-size: 13px; font-weight: 500; display: none; }
+.draft-banner { background: #FFF3D6; color: #633806; padding: 10px 14px; font-size: 13px; display: none; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 0.5px solid rgba(0,0,0,0.08); }
+.draft-banner.visible { display: flex; }
+.draft-saved { font-size: 11px; color: #3B6D11; padding: 4px 10px; background: #EAF3DE; border-radius: 99px; margin-left: 8px; opacity: 0; transition: opacity 0.3s; }
+.draft-saved.show { opacity: 1; }
 </style>
 </head>
 <body>
@@ -88,6 +92,10 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 5px
     <div id="sync-status" style="font-size:12px;color:var(--muted);">☁️ Google Sheets</div>
     <button class="btn btn-ghost" onclick="syncFromSheet()" style="padding:5px 12px;font-size:12px;">↓ Charger</button>
   </div>
+  <div id="draft-banner" class="draft-banner">
+    <span>📝 Séance en cours non sauvegardée</span>
+    <button class="btn btn-accent" onclick="resumeDraft()" style="padding:6px 14px;font-size:13px;">Reprendre</button>
+  </div>
   <div class="section-label">Cette semaine</div>
   <div class="stat-grid">
     <div class="stat-card"><div class="stat-val" id="stat-seances">0</div><div class="stat-lbl">Séances</div></div>
@@ -104,11 +112,14 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 5px
   <div class="header">
     <button class="btn btn-ghost" onclick="goHome()" style="padding:8px 14px;">✕</button>
     <h1>Nouvelle séance</h1>
-    <button class="btn btn-accent" onclick="saveSession()" style="padding:9px 16px;font-size:14px;">Sauver</button>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span id="draft-saved" class="draft-saved">Sauvegardé</span>
+      <button class="btn btn-accent" onclick="saveSession()" style="padding:9px 16px;font-size:14px;">Sauver</button>
+    </div>
   </div>
   <div style="padding:14px 14px 8px;">
     <label>Nom de la séance</label>
-    <input type="text" id="session-name" placeholder="Push, Pull, Jambes..." />
+    <input type="text" id="session-name" placeholder="Push, Pull, Jambes..." oninput="saveDraft()" />
   </div>
   <div id="exercises-list"></div>
   <div style="padding:4px 14px 16px;">
@@ -219,6 +230,7 @@ let currentExs = [];
 let progressChart = null;
 let currentProgressEx = null;
 let currentMetric = 'weight';
+let draftTimer = null;
 
 // iOS banner
 if (/iphone|ipad|ipod/i.test(navigator.userAgent) && !navigator.standalone)
@@ -227,6 +239,54 @@ if (/iphone|ipad|ipod/i.test(navigator.userAgent) && !navigator.standalone)
 function save() { localStorage.setItem('gymlog_v2', JSON.stringify(sessions)); }
 function saveCustom() { localStorage.setItem('gymlog_custom', JSON.stringify(customExercises)); }
 
+// ── DRAFT ─────────────────────────────────────────────────
+function saveDraft() {
+  const draft = {
+    name: document.getElementById('session-name').value,
+    exercises: JSON.parse(JSON.stringify(currentExs)),
+    savedAt: new Date().toISOString()
+  };
+  localStorage.setItem('gymlog_draft', JSON.stringify(draft));
+  // Show "Sauvegardé" badge briefly
+  const badge = document.getElementById('draft-saved');
+  if (badge) {
+    badge.classList.add('show');
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => badge.classList.remove('show'), 2000);
+  }
+  checkDraftBanner();
+}
+
+function clearDraft() {
+  localStorage.removeItem('gymlog_draft');
+  checkDraftBanner();
+}
+
+function getDraft() {
+  return JSON.parse(localStorage.getItem('gymlog_draft') || 'null');
+}
+
+function checkDraftBanner() {
+  const draft = getDraft();
+  const banner = document.getElementById('draft-banner');
+  if (draft && (draft.exercises.length > 0 || draft.name)) {
+    banner.classList.add('visible');
+  } else {
+    banner.classList.remove('visible');
+  }
+}
+
+function resumeDraft() {
+  const draft = getDraft();
+  if (!draft) return;
+  currentExs = draft.exercises || [];
+  document.getElementById('session-name').value = draft.name || '';
+  renderExList();
+  showScreen('screen-session');
+  setNav(null);
+}
+
+// ── NAV ──────────────────────────────────────────────────
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
@@ -236,22 +296,55 @@ function setNav(id) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   if (id) document.getElementById(id).classList.add('active');
 }
-function goHome() { currentExs = []; renderHome(); showScreen('screen-home'); setNav('nav-home'); }
+function goHome() {
+  currentExs = [];
+  renderHome();
+  showScreen('screen-home');
+  setNav('nav-home');
+}
 function goStats() { renderStats(); showScreen('screen-stats'); setNav('nav-stats'); }
 
 // ── SYNC ─────────────────────────────────────────────────
 function setSyncStatus(icon, text, color) {
   document.getElementById('sync-status').innerHTML =
-    icon + ' <span style="color:' + (color||'var(--muted)') + '">' + text + '</span>';
+    icon + ' <span style="color:' + (color || 'var(--muted)') + '">' + text + '</span>';
 }
 
 async function syncToSheet(session) {
   setSyncStatus('🔄', 'Sauvegarde...', '#888');
   try {
-    const res = await fetch(SHEET_URL, { method: 'POST', body: JSON.stringify(session) });
+    const payload = Object.assign({}, session, { date: new Date(session.date).toISOString() });
+    const res = await fetch(SHEET_URL, { method: 'POST', body: JSON.stringify(payload) });
     const data = await res.json();
     data.ok ? setSyncStatus('☁️', 'Sauvegardé ✓', '#3B6D11') : setSyncStatus('⚠️', 'Erreur serveur', '#A32D2D');
   } catch(e) { setSyncStatus('⚠️', 'Hors ligne — local OK', '#A32D2D'); }
+}
+
+async function deleteFromSheet(session) {
+  try {
+    await fetch(SHEET_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'delete', date: new Date(session.date).toISOString(), name: session.name })
+    });
+  } catch(e) {}
+}
+
+async function saveExerciseToSheet(name, muscle) {
+  try {
+    await fetch(SHEET_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'saveExercise', name: name, muscle: muscle })
+    });
+  } catch(e) {}
+}
+
+async function deleteExerciseFromSheet(name) {
+  try {
+    await fetch(SHEET_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'deleteExercise', name: name })
+    });
+  } catch(e) {}
 }
 
 async function syncFromSheet() {
@@ -283,6 +376,7 @@ async function syncFromSheet() {
 // ── SESSION ──────────────────────────────────────────────
 function startSession() {
   currentExs = [];
+  clearDraft();
   document.getElementById('session-name').value = '';
   renderExList();
   showScreen('screen-session');
@@ -327,6 +421,7 @@ function filterEx() {
 }
 
 function renderExList() {
+  saveDraft();
   const el = document.getElementById('exercises-list');
   if (!currentExs.length) {
     el.innerHTML = '<div class="empty-state" style="padding:30px 24px"><div class="empty-icon">🏋️</div>Ajoutez votre premier exercice</div>';
@@ -337,7 +432,6 @@ function renderExList() {
     const pr = getPR(ex.name);
     const card = document.createElement('div');
     card.className = 'card';
-
     const header = document.createElement('div');
     header.className = 'row';
     header.style.marginBottom = '10px';
@@ -348,12 +442,28 @@ function renderExList() {
     delEx.addEventListener('click', function() { currentExs.splice(ei, 1); renderExList(); });
     header.appendChild(delEx);
     card.appendChild(header);
+    // Last session hint
+    const lastData = getLastSessionData(ex.name);
+    if (lastData && lastData.weight > 0) {
+      const hint = document.createElement('div');
+      hint.style.cssText = 'background:#EAF3DE;border-radius:8px;padding:8px 12px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;';
+      hint.innerHTML = '<span style="font-size:12px;color:#3B6D11;">📅 Dernière fois (' + lastData.date + ')</span>' +
+        '<div style="display:flex;gap:8px;align-items:center;">' +
+        '<span style="font-size:13px;font-weight:600;color:#3B6D11;">' + lastData.reps + ' reps × ' + lastData.weight + ' kg</span>' +
+        '<button style="background:#3B6D11;color:white;border:none;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;" data-ei="' + ei + '">Copier</button>' +
+        '</div>';
+      hint.querySelector('button').addEventListener('click', function() {
+        const eiVal = parseInt(this.dataset.ei);
+        currentExs[eiVal].sets = lastData.sets.map(s => ({ reps: s.reps, weight: s.weight }));
+        renderExList();
+      });
+      card.appendChild(hint);
+    }
 
     const colHeaders = document.createElement('div');
     colHeaders.style.cssText = 'display:grid;grid-template-columns:28px 1fr 1fr 36px;gap:8px;margin-bottom:6px;';
     colHeaders.innerHTML = '<span></span><div style="font-size:11px;color:var(--muted);text-align:center;font-weight:500;">REPS</div><div style="font-size:11px;color:var(--muted);text-align:center;font-weight:500;">KG</div><span></span>';
     card.appendChild(colHeaders);
-
     const setsContainer = document.createElement('div');
     ex.sets.forEach(function(s, si) {
       const row = document.createElement('div');
@@ -369,7 +479,7 @@ function renderExList() {
       repsInput.value = s.reps;
       repsInput.style.textAlign = 'center';
       repsInput.style.padding = '10px 6px';
-      repsInput.addEventListener('input', function() { currentExs[ei].sets[si].reps = this.value; });
+      repsInput.addEventListener('input', function() { currentExs[ei].sets[si].reps = this.value; saveDraft(); });
       const weightInput = document.createElement('input');
       weightInput.type = 'number';
       weightInput.setAttribute('inputmode', 'decimal');
@@ -379,7 +489,7 @@ function renderExList() {
       weightInput.value = s.weight;
       weightInput.style.textAlign = 'center';
       weightInput.style.padding = '10px 6px';
-      weightInput.addEventListener('input', function() { currentExs[ei].sets[si].weight = this.value; });
+      weightInput.addEventListener('input', function() { currentExs[ei].sets[si].weight = this.value; saveDraft(); });
       const delSet = document.createElement('button');
       delSet.className = 'del-btn';
       delSet.textContent = '✕';
@@ -393,14 +503,12 @@ function renderExList() {
       setsContainer.appendChild(row);
     });
     card.appendChild(setsContainer);
-
     const addSetBtn = document.createElement('button');
     addSetBtn.className = 'btn btn-ghost';
     addSetBtn.style.cssText = 'width:100%;text-align:center;padding:9px;font-size:14px;margin-top:4px;';
     addSetBtn.textContent = '+ Série';
     addSetBtn.addEventListener('click', function() { currentExs[ei].sets.push({ reps: '', weight: '' }); renderExList(); });
     card.appendChild(addSetBtn);
-
     el.appendChild(card);
   });
 }
@@ -411,6 +519,7 @@ function saveSession() {
   const session = { id: Date.now(), date: new Date().toISOString(), name: name, exercises: JSON.parse(JSON.stringify(currentExs)) };
   sessions.unshift(session);
   save();
+  clearDraft();
   syncToSheet(session);
   goHome();
 }
@@ -443,7 +552,7 @@ function renderCustomList() {
     delBtn.className = 'del-btn';
     delBtn.style.color = 'var(--accent)';
     delBtn.textContent = '🗑';
-    delBtn.addEventListener('click', function() { customExercises.splice(i, 1); saveCustom(); renderCustomList(); });
+    delBtn.addEventListener('click', function() { deleteExerciseFromSheet(ex.name); customExercises.splice(i, 1); saveCustom(); renderCustomList(); });
     item.appendChild(delBtn);
     el.appendChild(item);
   });
@@ -458,7 +567,24 @@ function getPR(name) {
   return max > 0 ? max : null;
 }
 
+function getLastSessionData(name) {
+  // Find most recent session containing this exercise
+  for (let i = 0; i < sessions.length; i++) {
+    const s = sessions[i];
+    const ex = s.exercises.find(e => e.name === name);
+    if (ex && ex.sets.length > 0) {
+      const maxW = Math.max(...ex.sets.map(s => parseFloat(s.weight) || 0));
+      const maxR = Math.max(...ex.sets.map(s => parseInt(s.reps) || 0));
+      const d = new Date(s.date);
+      const dateStr = d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+      return { weight: maxW, reps: maxR, date: dateStr, sets: ex.sets };
+    }
+  }
+  return null;
+}
+
 function renderHome() {
+  checkDraftBanner();
   const weekAgo = Date.now() - 7 * 864e5;
   const week = sessions.filter(s => new Date(s.date).getTime() > weekAgo);
   let vol = 0, exCount = 0, setCount = 0;
@@ -470,7 +596,6 @@ function renderHome() {
   document.getElementById('stat-volume').textContent = Math.round(vol);
   document.getElementById('stat-exercices').textContent = exCount;
   document.getElementById('stat-series').textContent = setCount;
-
   const el = document.getElementById('history-list');
   if (!sessions.length) {
     el.innerHTML = '<div class="empty-state"><div class="empty-icon">🏅</div>Aucune séance enregistrée<br><br>Appuie sur <strong>+ Séance</strong> pour commencer !</div>';
@@ -501,13 +626,12 @@ function viewSession(id) {
   s.exercises.forEach(function(ex) {
     let vol = 0, bestW = 0;
     ex.sets.forEach(set => { const w = parseFloat(set.weight) || 0, r = parseInt(set.reps) || 0; vol += w * r; if (w > bestW) bestW = w; });
-    const rows = ex.sets.map((set, i) => '<div class="exercise-row row"><span style="font-size:13px;color:var(--muted);">Série ' + (i+1) + '</span><span style="font-size:15px;font-weight:500;">' + (set.reps || '—') + ' × ' + (set.weight || '—') + ' kg</span></div>').join('');
+    const rows = ex.sets.map((set, i) => '<div class="exercise-row row"><span style="font-size:13px;color:var(--muted);">Série ' + (i + 1) + '</span><span style="font-size:15px;font-weight:500;">' + (set.reps || '—') + ' × ' + (set.weight || '—') + ' kg</span></div>').join('');
     const div = document.createElement('div');
     div.className = 'card';
     div.innerHTML = '<div style="font-size:15px;font-weight:600;margin-bottom:4px;">' + ex.name + ' <span class="tag">' + ex.muscle + '</span></div>' + rows + '<div style="margin-top:8px;font-size:12px;color:var(--muted);">Volume : <strong>' + Math.round(vol) + ' kg</strong> · Meilleure : <strong>' + bestW + ' kg</strong></div>';
     el.appendChild(div);
   });
-  // Bouton supprimer
   const delDiv = document.createElement('div');
   delDiv.style.cssText = 'padding: 8px 14px 16px;';
   const delBtn = document.createElement('button');
@@ -516,6 +640,7 @@ function viewSession(id) {
   delBtn.textContent = '🗑 Supprimer cette séance';
   delBtn.addEventListener('click', function() {
     if (confirm('Supprimer "' + s.name + '" ?')) {
+      deleteFromSheet(s);
       sessions = sessions.filter(x => x.id !== id);
       save();
       goStats();
@@ -523,7 +648,6 @@ function viewSession(id) {
   });
   delDiv.appendChild(delBtn);
   el.appendChild(delDiv);
-
   document.getElementById('stats-title').textContent = s.name;
   showScreen('screen-stats');
   setNav('nav-stats');
@@ -554,8 +678,7 @@ function renderStats() {
 // ── PROGRESS CHART ───────────────────────────────────────
 function getProgressData(name) {
   const pts = [];
-  var reversed = sessions.slice().reverse();
-  reversed.forEach(function(s) {
+  sessions.slice().reverse().forEach(function(s) {
     var maxW = 0, vol = 0, maxR = 0;
     s.exercises.forEach(function(ex) {
       if (ex.name === name) ex.sets.forEach(function(set) {
@@ -595,7 +718,6 @@ function drawProgress() {
   });
   var isDark = matchMedia('(prefers-color-scheme:dark)').matches;
   var grid = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)';
-  var accent = '#E24B4A';
   if (progressChart) { progressChart.destroy(); progressChart = null; }
   if (!data.length) {
     document.getElementById('prog-stats').innerHTML = '<div class="empty-state" style="padding:20px"><div class="empty-icon">📉</div>Pas encore assez de données</div>';
@@ -606,7 +728,7 @@ function drawProgress() {
     type: 'line',
     data: {
       labels: data.map(function(p) { return p.label; }),
-      datasets: [{ data: vals, borderColor: accent, backgroundColor: 'rgba(226,75,74,0.08)', borderWidth: 2.5, pointBackgroundColor: accent, pointRadius: 5, pointHoverRadius: 7, fill: true, tension: 0.4 }]
+      datasets: [{ data: vals, borderColor: '#E24B4A', backgroundColor: 'rgba(226,75,74,0.08)', borderWidth: 2.5, pointBackgroundColor: '#E24B4A', pointRadius: 5, pointHoverRadius: 7, fill: true, tension: 0.4 }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
